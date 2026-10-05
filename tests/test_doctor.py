@@ -32,7 +32,7 @@ def test_doctor_reports_hook_state(tmp_path):
     scaffold.merge_hook_settings(tmp_path)
     on = {f.id: f for f in run_doctor(tmp_path, cfg)}
     assert on["hooks_enabled"].ok is True
-    assert "codebase-index update" in on["hooks_enabled"].detail
+    assert "codebase-index --quiet update" in on["hooks_enabled"].detail
 
 
 def test_doctor_cli_json(tmp_path):

@@ -7,6 +7,7 @@ the wheel via importlib.resources, so it works in editable and zip installs alik
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import stat
@@ -249,7 +250,13 @@ def write_hooks_example(root: Path) -> Path:
 
 
 SETTINGS_REL = Path(".claude") / "settings.json"
-_HOOK_MARKER = "codebase-index update"
+# `update --quiet` is what earlier examples shipped, but `--quiet` is a global option,
+# so that spelling exits 2 before updating anything; with its output discarded the hook
+# failed silently on every edit. Both spellings are recognized, and the broken one is
+# rewritten when the hook is merged.
+_HOOK_RE = re.compile(r"codebase-index\s+(?:--quiet\s+)?update\b")
+_BROKEN_HOOK = "codebase-index update --quiet"
+_FIXED_HOOK = "codebase-index --quiet update"
 
 
 def _template_hook_entries() -> "list[dict]":
@@ -261,18 +268,34 @@ def _template_hook_entries() -> "list[dict]":
 def _has_our_hook(settings: dict) -> bool:
     for entry in settings.get("hooks", {}).get("PostToolUse", []):
         for hk in entry.get("hooks", []):
-            if _HOOK_MARKER in hk.get("command", ""):
+            if _HOOK_RE.search(hk.get("command", "")):
                 return True
     return False
 
 
+def _repair_hook_commands(settings: dict) -> bool:
+    """Rewrite the broken `update --quiet` spelling; True when anything changed."""
+    changed = False
+    for entry in settings.get("hooks", {}).get("PostToolUse", []):
+        for hk in entry.get("hooks", []):
+            command = hk.get("command", "")
+            if _BROKEN_HOOK in command:
+                hk["command"] = command.replace(_BROKEN_HOOK, _FIXED_HOOK)
+                changed = True
+    return changed
+
+
 def merge_hook_settings(root: Path) -> bool:
+    """Install the auto-update hook, or repair a broken one; True when the file changed."""
     path = root / SETTINGS_REL
     settings: dict = {}
     if path.exists():
         settings = json.loads(path.read_text(encoding="utf-8"))
     if _has_our_hook(settings):
-        return False
+        if not _repair_hook_commands(settings):
+            return False
+        path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        return True
 
     hooks = settings.setdefault("hooks", {})
     post = hooks.setdefault("PostToolUse", [])
@@ -464,5 +487,5 @@ def enabled_hooks(root: Path) -> list[str]:
         hk.get("command", "")
         for entry in settings.get("hooks", {}).get("PostToolUse", [])
         for hk in entry.get("hooks", [])
-        if _HOOK_MARKER in hk.get("command", "")
+        if _HOOK_RE.search(hk.get("command", ""))
     ]

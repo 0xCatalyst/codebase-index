@@ -111,6 +111,8 @@ def test_vector_mode_enabled_runs(tmp_path, monkeypatch):
 
 
 def test_search_reports_stale_after_edit(sample_repo, tmp_path, monkeypatch):
+    # Staleness is reported when reads do not refresh first (auto-refresh off).
+    monkeypatch.setenv("CBX_NO_AUTO_REFRESH", "1")
     import sqlite3
 
     from typer.testing import CliRunner
@@ -141,7 +143,9 @@ def test_search_reports_stale_after_edit(sample_repo, tmp_path, monkeypatch):
     assert stale["index"]["files_changed_since_build"] >= 1
 
 
-def test_explain_reports_stale_after_edit(sample_repo):
+def test_explain_reports_stale_after_edit(sample_repo, monkeypatch):
+    # Staleness is reported when reads do not refresh first (auto-refresh off).
+    monkeypatch.setenv("CBX_NO_AUTO_REFRESH", "1")
     """Regression: explain must honor the freshness contract like search.
 
     Before the fix, explain called the retrieval pipeline without root/config, so

@@ -3,7 +3,7 @@
     "post_tool_use": {
       "enabled": true,
       "events": ["Write", "Edit"],
-      "command": "codebase-index update --quiet",
+      "command": "codebase-index --quiet update",
       "description": "Automatically update the index after file edits"
     }
   },

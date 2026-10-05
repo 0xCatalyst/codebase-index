@@ -36,28 +36,64 @@ app = typer.Typer(
 
 # --- global state resolved from common options --------------------------------------------------
 def _ensure_index(ctx: "typer.Context") -> tuple[Path, Any]:
+    """Return an index that matches the working tree, building or refreshing it first."""
     from .indexer.pipeline import build_index
+    from .indexer.refresh import refresh_if_stale, write_lock
     from .service import resolve_db
     from .storage.db import Database
 
     root_opt = ctx.obj.get("root") if ctx.obj else None
     db_path, cfg = resolve_db(root_opt)
+    # A command's own --json (named json_flag or json_out) also keeps notes off stderr.
+    quiet = bool(
+        (ctx.obj and (ctx.obj.get("quiet") or ctx.obj.get("json")))
+        or ctx.params.get("json_flag")
+        or ctx.params.get("json_out")
+    )
     if db_path.exists():
+        result = refresh_if_stale(cfg, db_path)
+        if ctx.obj is not None:
+            ctx.obj["freshness"] = result.freshness
+        if not quiet:
+            _report_refresh(result)
         return db_path, cfg
 
-    if not (ctx.obj and (ctx.obj.get("quiet") or ctx.obj.get("json"))):
+    if not quiet:
         typer.echo("[codebase-index] no index found; building one now.", err=True)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with Database(db_path) as db:
-        build_index(cfg, db, root=Path(cfg.root))
+    with write_lock(db_path.parent):
+        if not db_path.exists():  # another process may have built it while this one waited
+            with Database(db_path) as db:
+                build_index(cfg, db, root=Path(cfg.root))
     return db_path, cfg
+
+
+def _report_refresh(result: Any) -> None:
+    """One stderr line when a read had to refresh first, so stdout stays parseable."""
+    if result.rebuilt:
+        typer.echo(f"[codebase-index] rebuilt the index "
+                   f"({result.seconds:.1f}s)", err=True)
+    elif result.refreshed_files:
+        typer.echo(f"[codebase-index] refreshed {result.refreshed_files} changed file(s) "
+                   f"before answering ({result.seconds:.1f}s)", err=True)
+    elif result.lock_timed_out:
+        typer.echo("[codebase-index] another process is still updating the index; "
+                   "answering from the current one", err=True)
+    for note in result.notes:
+        typer.echo(f"[codebase-index] {note}", err=True)
+
+
+def _current_freshness(ctx: "typer.Context", fallback: Any) -> Any:
+    """The freshness `_ensure_index` measured, so graph answers stop claiming `fresh`."""
+    measured = ctx.obj.get("freshness") if ctx.obj else None
+    return measured if measured is not None else fallback
 
 
 def _remove_db_files(db_path: Path) -> None:
     """Delete the SQLite db and its WAL/SHM sidecars (used to force a clean rebuild)."""
-    for p in (db_path, *(db_path.with_name(db_path.name + s) for s in ("-wal", "-shm"))):
-        if p.exists():
-            p.unlink()
+    from .indexer.refresh import remove_db_files
+
+    remove_db_files(db_path)
 
 
 def _open_in_browser(path: Path) -> None:
@@ -342,18 +378,24 @@ def index(
 
     from .config import load
     from .indexer.pipeline import build_index
+    from .indexer.refresh import write_lock
     from .storage.db import SCHEMA_VERSION, Database, peek_schema_version
 
     root_opt = ctx.obj.get("root") if ctx.obj else None
     cfg = load(root_opt)
     db_path = Path(cfg.root) / ".claude" / "cache" / "codebase-index" / "index.sqlite"
-    # A full build discards an outdated-schema index: schema.sql is applied with
-    # IF NOT EXISTS, so an upgrade can't add columns/triggers in place — recreate.
-    if rebuild or (db_path.exists() and peek_schema_version(db_path) < SCHEMA_VERSION):
-        _remove_db_files(db_path)
+    with write_lock(db_path.parent) as held:
+        if not held:
+            typer.echo("[codebase-index] another process holds the index lock; try again",
+                       err=True)
+            raise typer.Exit(code=1)
+        # A full build discards an outdated-schema index: schema.sql is applied with
+        # IF NOT EXISTS, so an upgrade can't add columns/triggers in place — recreate.
+        if rebuild or (db_path.exists() and peek_schema_version(db_path) < SCHEMA_VERSION):
+            _remove_db_files(db_path)
 
-    with Database(db_path) as db:
-        stats = build_index(cfg, db, root=Path(cfg.root))
+        with Database(db_path) as db:
+            stats = build_index(cfg, db, root=Path(cfg.root))
 
     if ctx.obj and ctx.obj.get("json"):
         typer.echo(
@@ -387,8 +429,7 @@ def update(
     import json as _json
 
     from .config import load
-    from .indexer.pipeline import build_index, update_index
-    from .storage.db import SCHEMA_VERSION, Database, peek_schema_version
+    from .indexer.refresh import run_update
 
     is_json = bool(ctx.obj and ctx.obj.get("json"))
     quiet = bool(ctx.obj and ctx.obj.get("quiet"))
@@ -402,15 +443,13 @@ def update(
             typer.echo("No index found. Run `codebase-index index` first.")
         raise typer.Exit(code=0)
 
-    if peek_schema_version(db_path) < SCHEMA_VERSION:
-        # Schema changed under the index; an incremental write would target old
-        # tables. Upgrade by rebuilding from scratch (the index is a derived cache).
-        _remove_db_files(db_path)
-        with Database(db_path) as db:
-            stats = build_index(cfg, db, root=Path(cfg.root))
-    else:
-        with Database(db_path) as db:
-            stats = update_index(cfg, db, root=Path(cfg.root), since=since, all_files=all_files)
+    # Under the writer lock; an index from an older schema is rebuilt from scratch
+    # (the index is a derived cache, and an incremental write would target old tables).
+    outcome = run_update(cfg, db_path, since=since, all_files=all_files)
+    if outcome is None:
+        typer.echo("[codebase-index] another process holds the index lock; try again", err=True)
+        raise typer.Exit(code=1)
+    stats, _rebuilt = outcome
 
     if is_json:
         typer.echo(
@@ -520,6 +559,7 @@ def symbol(
 
     with Database(db_path) as db:
         resp = symbol_lookup(db.conn, name, kind=kind, exact=exact)
+    resp.index = _current_freshness(ctx, resp.index)
     typer.echo(json_out.render(resp) if is_json else md_out.render_symbols(resp))
 
 
@@ -559,6 +599,7 @@ def refs(
         resp = refs_lookup(
             db.conn, symbol_name, kind=kind, exclude_tests=exclude_tests, paths=path or ()
         )
+    resp.index = _current_freshness(ctx, resp.index)
     if compact:
         typer.echo(md_out.render_refs_compact(resp, code=_site_lines(Path(_cfg.root), resp.sites)))
     else:
@@ -602,6 +643,7 @@ def impact(
             # One hop further: a nonzero count means --depth cut the answer short.
             beyond = impact_lookup(db.conn, target, depth=depth + 1, direction=direction)
             deeper = len(set(beyond.files) - set(resp.files))
+    resp.index = _current_freshness(ctx, resp.index)
     if compact:
         typer.echo(md_out.render_impact_compact(resp, deeper=deeper))
         return

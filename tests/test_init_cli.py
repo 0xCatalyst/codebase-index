@@ -35,7 +35,7 @@ def test_init_scaffolds_skill_config_and_gitignore(tmp_path):
         for entry in settings["hooks"]["PostToolUse"]
         for hk in entry["hooks"]
     ]
-    assert any("codebase-index update" in c for c in cmds)
+    assert any("codebase-index --quiet update" in c for c in cmds)
     assert "codebase-index index" in res.output
 
 

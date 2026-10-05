@@ -13,6 +13,11 @@ from typing import Optional
 SCHEMA_VERSION = 5
 
 
+# Parallel agents read while another refreshes: wait out a writer instead of
+# failing with "database is locked" after sqlite3's 5 s default.
+BUSY_TIMEOUT_S = 30.0
+
+
 class Database:
     """Own one SQLite connection for one CLI invocation."""
 
@@ -22,7 +27,7 @@ class Database:
 
     def open(self) -> "Database":
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path)
+        self._conn = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_S)
         self._conn.row_factory = sqlite3.Row
         self._apply_pragmas()
         self._apply_schema()
@@ -52,6 +57,7 @@ class Database:
         return int(row[0]) if row else 0
 
     def _apply_pragmas(self) -> None:
+        self.conn.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_S * 1000)}")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA synchronous = NORMAL")
         self.conn.execute("PRAGMA foreign_keys = ON")

@@ -61,13 +61,19 @@ def run_watch(config, db_path, debounce_ms: int) -> None:  # pragma: no cover - 
         ) from exc
 
     from ..indexer.pipeline import update_index
+    from ..indexer.refresh import write_lock
     from ..storage.db import Database
 
     root = Path(config.root).resolve()
 
     def _run_update() -> None:
-        with Database(db_path) as db:
-            stats = update_index(config, db, root=root)
+        # The same writer lock as `update` and the read-time refresh: one writer at a time.
+        with write_lock(Path(db_path).parent) as held:
+            if not held:
+                print("[watch] index lock busy; will retry on the next change", flush=True)
+                return
+            with Database(db_path) as db:
+                stats = update_index(config, db, root=root)
         if stats.indexed or stats.deleted:
             print(f"[watch] updated {stats.indexed}, pruned {stats.deleted}", flush=True)
 

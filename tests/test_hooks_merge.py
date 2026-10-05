@@ -16,7 +16,7 @@ def test_merge_hook_settings_creates_settings(tmp_path):
         for entry in data["hooks"]["PostToolUse"]
         for hk in entry["hooks"]
     ]
-    assert any("codebase-index update" in c for c in cmds)
+    assert any("codebase-index --quiet update" in c for c in cmds)
 
 
 def test_merge_hook_settings_is_idempotent(tmp_path):
@@ -28,7 +28,7 @@ def test_merge_hook_settings_is_idempotent(tmp_path):
         for entry in data["hooks"]["PostToolUse"]
         for hk in entry["hooks"]
     ]
-    assert sum("codebase-index update" in c for c in cmds) == 1  # not duplicated
+    assert sum("codebase-index --quiet update" in c for c in cmds) == 1  # not duplicated
 
 
 def test_merge_hook_settings_preserves_existing(tmp_path):
@@ -47,4 +47,4 @@ def test_enabled_hooks_detects_our_hook(tmp_path):
     assert scaffold.enabled_hooks(tmp_path) == []
     scaffold.merge_hook_settings(tmp_path)
     found = scaffold.enabled_hooks(tmp_path)
-    assert any("codebase-index update" in c for c in found)
+    assert any("codebase-index --quiet update" in c for c in found)

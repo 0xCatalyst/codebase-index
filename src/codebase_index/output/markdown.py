@@ -270,6 +270,14 @@ def render_search_compact(payload: dict) -> str:
     return "\n".join(lines)
 
 
+def _stale_line(index: object) -> Optional[str]:
+    """`search` puts this in its header; graph answers carry it on their own line."""
+    if index is None or not getattr(index, "stale", False):
+        return None
+    changed = getattr(index, "files_changed_since_build", 0) or "?"
+    return f"# index stale ({changed} files changed): run `codebase-index update`"
+
+
 def render_impact_compact(resp: ImpactResponse, *, deeper: int = 0) -> str:
     """Agent text for impact: one line per affected file, `d<hops> path (name:line, ...)`.
 
@@ -280,6 +288,8 @@ def render_impact_compact(resp: ImpactResponse, *, deeper: int = 0) -> str:
     """
     lines = [f"# impact {resp.target} · {resp.direction} · depth {resp.depth} · "
              f"{len(resp.files)} files"]
+    if stale := _stale_line(resp.index):
+        lines.append(stale)
     if resp.coverage.partial:
         lines.append(f"# partial: {resp.coverage.reason}")
     if deeper:
@@ -321,6 +331,8 @@ def render_refs_compact(
         f"{n} {kind}{'' if n == 1 else 's'}" for kind, n in sorted(counts.items())
     )
     lines = [f"# {resp.query}: {summary or 'no sites'}"]
+    if stale := _stale_line(resp.index):
+        lines.append(stale)
     if resp.coverage.partial:
         lines.append(f"# partial: {resp.coverage.reason}")
     for site in resp.sites:

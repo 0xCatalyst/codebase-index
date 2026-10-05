@@ -55,8 +55,10 @@ then lists each affected file once (`d<hops> path (symbol:line, ...)`).
 1. Pick one session tag per conversation (e.g. `auth-fix-1`); pass it to
    `search`/`explain`. Results already sent in this session print as
    `(already sent)` — use your earlier copy.
-2. A header saying `index stale` → run `codebase-index update` once; `NO INDEX`
-   → `codebase-index index`.
+2. Reads refresh files changed since the last update before answering (a
+   stderr line says so). A header saying `index stale` means that was off
+   (`CBX_NO_AUTO_REFRESH=1`) or another process held the index lock → run
+   `codebase-index update` once; `NO INDEX` → `codebase-index index`.
 3. Batch independent questions into one Bash call (`cmd1; echo ---; cmd2`).
 4. `# partial:` on refs/impact means the list may be incomplete. For
    `Owner.member` it lists `possible_call` sites (calls on a variable the index

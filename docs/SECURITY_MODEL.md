@@ -130,7 +130,7 @@ cache-permission checks are **not** implemented; do not rely on `doctor` for the
 ## Hook risks
 
 Optional hooks (the PostToolUse auto-update) execute CLI commands automatically. Keep hook
-commands read-only (`codebase-index update --quiet`), free of user-controlled input, and quiet.
+commands read-only (`codebase-index --quiet update`), free of user-controlled input, and quiet.
 
 ## Unsafe patterns
 

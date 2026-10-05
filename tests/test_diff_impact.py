@@ -28,7 +28,9 @@ def _git_repo(sample_repo, tmp_path):
     return root
 
 
-def test_diff_impact_reports_changed_and_affected_files(sample_repo, tmp_path):
+def test_diff_impact_reports_changed_and_affected_files(sample_repo, tmp_path, monkeypatch):
+    # Staleness is reported when reads do not refresh first (auto-refresh off).
+    monkeypatch.setenv("CBX_NO_AUTO_REFRESH", "1")
     root = _git_repo(sample_repo, tmp_path)
     indexed = runner.invoke(app, ["--root", str(root), "index"])
     assert indexed.exit_code == 0, indexed.output

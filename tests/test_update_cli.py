@@ -42,7 +42,9 @@ def test_update_json_reports_counts(tmp_path):
     assert data["deleted"] == 0
 
 
-def test_update_refreshes_freshness(tmp_path):
+def test_update_refreshes_freshness(tmp_path, monkeypatch):
+    # Staleness is reported when reads do not refresh first (auto-refresh off).
+    monkeypatch.setenv("CBX_NO_AUTO_REFRESH", "1")
     root = _git_repo(tmp_path)
     assert runner.invoke(app, ["--root", str(root), "index"]).exit_code == 0
     (root / "src" / "a.py").write_text("def alpha():\n    return 5\n", encoding="utf-8")

@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.2+catalyst.3] - 2026-10-05
+
+Index freshness for agents that edit and then query, and a working auto-update hook.
+
+### Fixed
+
+- Reads answer from the working tree as it is now. `search`, `refs`, `impact`, `symbol` and
+  the other read commands check whether indexable files changed since the last update and,
+  if so, run the incremental update before answering; one stderr line says so, and stdout
+  stays parseable. A fresh index costs only that read-only check (about 0.3 s on a
+  2,000-file repository) and no write. Before, `refs` and `impact` answered from the last
+  build and always reported the index as fresh, so an agent that edited a file and then
+  asked who calls it got the pre-edit answer. `CBX_NO_AUTO_REFRESH=1` turns this off;
+  `refs` and `impact` then print `# index stale (N files changed)` the way `search` does.
+  An index from an older schema still answers in place until `update` rebuilds it.
+- One writer at a time. `index`, `update`, `watch` and the read-time refresh share a lock
+  file next to the database, so parallel agents queue instead of failing with
+  `database is locked`, and a reader that waited re-checks freshness instead of repeating
+  an update another process already did. The index database waits up to 30 s for a lock
+  instead of sqlite3's 5 s default.
+- The auto-update hook in the skill's `examples/hooks/settings.json`, which
+  `init --with-hooks` installs, ran `codebase-index update --quiet`. That exits 2, because
+  `--quiet` is a global option, and with its output discarded it failed silently on every
+  edit. It is now `codebase-index --quiet update`, and `init` repairs the broken spelling in
+  an existing `.claude/settings.json`.
+
 ## [2.1.2+catalyst.2] - 2026-10-05
 
 Agent-facing output and routing. On the same 1,842-file Next.js repository, six navigation

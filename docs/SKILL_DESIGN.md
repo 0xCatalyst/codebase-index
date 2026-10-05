@@ -139,7 +139,7 @@ Configure automatic index updates in `.codeindex.json`:
     "post_tool_use": {
       "enabled": true,
       "events": ["Write", "Edit"],
-      "command": "codebase-index update --quiet"
+      "command": "codebase-index --quiet update"
     }
   }
 }
