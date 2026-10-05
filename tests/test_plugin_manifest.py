@@ -38,11 +38,12 @@ def test_plugin_version_matches_package():
 def test_requirements_lock_pins_package_from_github_tag():
     # codebase-index is distributed from GitHub (not PyPI): the lock pins the
     # package to the matching release tag tarball, not a PyPI version specifier.
+    # This fork installs from its own tags (`v<upstream>+catalyst.<n>`).
     version = _load(".claude-plugin/plugin.json")["version"]
     lock_text = (ROOT / "requirements.lock").read_text(encoding="utf-8")
     expected = (
         "codebase-index @ "
-        f"https://github.com/denfry/codebase-index/archive/refs/tags/v{version}.tar.gz"
+        f"https://github.com/0xCatalyst/codebase-index/archive/refs/tags/v{version}.tar.gz"
     )
     assert expected in lock_text.splitlines()
     assert "codebase-index==" not in lock_text  # must not fall back to PyPI

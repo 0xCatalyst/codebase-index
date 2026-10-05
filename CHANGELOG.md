@@ -4,6 +4,51 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.2+catalyst.1] - 2026-10-05
+
+First change set of the 0xCatalyst fork, on top of upstream 2.1.2. Fork versions are
+`<upstream version>+catalyst.<n>` (PEP 440 local versions) and are not published to PyPI.
+
+### Fixed
+
+- JS/TS dependency graphs are now resolved the way the TypeScript compiler resolves them.
+  Measured on a 1,842-file Next.js/TypeScript repository against `tsc` module resolution:
+  file-level `impact` F1 went from 62% to 99% and symbol-level usage F1 from 58% to 99.7%.
+  - `.tsx` files are parsed with the TSX grammar. The TypeScript grammar cannot read JSX,
+    so a component file lost every definition after its first JSX block (27% of TSX
+    symbols and 13% of TSX call edges in that repository).
+  - Imports resolve through the nearest `tsconfig.json` / `jsconfig.json` (`paths`,
+    `baseUrl`, `extends`, JSON with comments), relative to the importing file, with the
+    compiler's extension and `index` probing. Dotted names (`./format.server`) are no
+    longer split at the dot, and a package import (`sonner`) is no longer guessed onto a
+    same-named repository file.
+  - A call or reference resolves through the import that binds its name: exact for an
+    imported name, never repo-wide for a name no import binds in an ES module. A built-in
+    or global call (`Date.now()`, `items.push(x)`, React's `useCallback`) is no longer
+    bound to the repository's only definition of that name.
+- Building vectors with the `local` or `external` embeddings backend no longer creates a
+  zero-width `vec_chunks` table: the backend's width is probed before the table exists.
+
+### Added
+
+- JS/TS references that are not calls: JSX elements (`<Card />`), type references, imported
+  names used as values, re-exports (`export { a } from './x'`), and same-file uses of a
+  module-level name the file declares only once. `refs` and `impact` now see components,
+  types and constants, not only functions that are called.
+- JS/TS symbols for module-level constants (`export const queryKeys = {...}`, kind
+  `constant`) and for functions wrapped in `memo`, `forwardRef`, `useCallback`, `lazy` or
+  `dynamic`; `new Foo()` is a call edge; `export ... from` and `import('./x')` are import
+  edges; `.mts` / `.cts` files are TypeScript.
+- Index schema version 5 (`edges.dst_module`, `edges.dst_export`); `index` and `update`
+  rebuild an older index automatically.
+- `search --rerank` / `explain --rerank`: an opt-in external re-ranker for plain-English
+  questions. The `typesafe` backend (TypeSafe System One) scores the top 30 local
+  candidates with one yes/no question each and reorders them; confidence follows its
+  probability. Refused unless `rerank.backend`, `rerank.allow_external = true` and an API
+  key (`$TYPESAFE_API_KEY` or `rerank.api_key_file`) are set; snippets are redacted first;
+  a failure keeps the local order; `doctor` names the endpoint. On 8 plain-English
+  questions it moved the right file into the top 5 for 6, against 3 without it.
+
 ## [Unreleased]
 
 ## [2.1.2] - 2026-09-25
