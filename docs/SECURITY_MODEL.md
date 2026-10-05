@@ -5,7 +5,7 @@
 ## Principles
 
 1. **Local-first** — Index, query, and storage all happen on the user's machine.
-2. **No network by default** — The base install has no network dependency. The only code path that can leave the machine is an *external embedding API*, which is **opt-in and off by default**.
+2. **No network by default** — The base install has no network dependency. Two code paths can leave the machine, both **opt-in and off by default**: an *external embedding API* and the *external re-ranker* behind `search --rerank`.
 3. **Never index sensitive material** — Secrets, `.env`, keys, certificates, build artifacts, dependency directories, binary files, and generated files are excluded before parsing.
 4. **Redact secrets in output** — Even indexed snippets are scrubbed before being shown to Claude or printed to the terminal.
 5. **Respect ignore files** — `.gitignore`, `.claudeignore`, `.codeindexignore`, and `.cursorignore` are all honored.
@@ -62,6 +62,21 @@ External embeddings require **all three** conditions:
 3. `doctor` and `index` both print a clear warning naming the endpoint
 
 Without all three, external embedding is refused.
+
+## Re-ranking & Network Policy
+
+`search --rerank` and `explain --rerank` ask an external model to reorder the top local
+candidates (backend `typesafe`: TypeSafe System One). They run only when the flag is passed
+**and** all three hold:
+1. `rerank.backend` names a re-ranker (default `none`)
+2. Explicit `rerank.allow_external = true` in config
+3. An API key in `$TYPESAFE_API_KEY` or in the file named by `rerank.api_key_file`
+
+Otherwise the search runs locally and the packet's `rerank.reason` says why. What is sent
+per query: the question plus the top `rerank.top_n` (default 30) candidates, each cut to
+`rerank.max_lines` lines and passed through the output redactor first. `doctor` names the
+endpoint, every re-ranked packet carries it under `rerank.endpoint`, and a failed call keeps
+the local order.
 
 ## Skill tool surface
 

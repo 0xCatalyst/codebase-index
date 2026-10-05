@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from ..config import Config
 from ..indexer.freshness import compute_freshness
@@ -118,6 +118,18 @@ def _confidence(ranked) -> Confidence:
     if agree == 1 and rel_gap > 0.5:
         return Confidence.HIGH
     if agree >= 2 or rel_gap > 0.1 or n >= 5:
+        return Confidence.MEDIUM
+    return Confidence.LOW
+
+
+def _probability_confidence(top: Optional[float]) -> Confidence:
+    """Confidence of a re-ranked page: the re-ranker's calibrated probability that the top
+    result answers the question. Below one half, no candidate looked like the answer."""
+    if top is None:
+        return Confidence.LOW
+    if top >= 0.8:
+        return Confidence.HIGH
+    if top >= 0.5:
         return Confidence.MEDIUM
     return Confidence.LOW
 
@@ -281,7 +293,11 @@ def search(
     evidence: Optional[Callable[[dict, list], None]] = None,
     max_read_lines: int = 120,
     hit_lines: bool = False,
+    reranker: Optional[Any] = None,
+    rerank_refused: Optional[str] = None,
 ) -> dict:
+    """`reranker` (external_rerank.TypeSafeReranker) reorders the top local candidates;
+    `rerank_refused` records why a requested re-rank could not run."""
     tuning = tuning or DEFAULT_TUNING
     plan = detect_intent(query)
     if token_budget <= 0:
@@ -297,6 +313,9 @@ def search(
     if tuning.question_pool_floor and is_question(query):
         floor = max(floor, tuning.question_pool_floor)
     pool_limit = fetch_limit if pool_mult == 1 else max(fetch_limit * pool_mult, floor)
+    if reranker is not None:
+        # The re-ranker can only promote what retrieval found: give it top_n distinct files.
+        pool_limit = max(pool_limit, reranker.top_n * max(pool_mult, 2))
     lists, weights = _run_retrievers(
         conn,
         query,
@@ -323,8 +342,23 @@ def search(
         ranked = mmr_select(ranked, fetch_limit, tuning.mmr_lambda)
     else:
         ranked = _diversify(ranked, per_file=tuning.max_per_file)
+    rerank_meta: Optional[dict] = None
+    if reranker is not None:
+        from .external_rerank import rerank_top
+
+        def _text(cand) -> str:
+            return "\n".join(_range_lines(conn, cand)[1][:reranker.max_lines])
+
+        ranked, rerank_meta = rerank_top(
+            reranker, query, ranked, top_n=reranker.top_n, text_of=_text
+        )
+    elif rerank_refused is not None:
+        rerank_meta = {"applied": False, "reason": rerank_refused}
     ranked = ranked[:fetch_limit]
-    confidence = _confidence(ranked)
+    if rerank_meta is not None and rerank_meta.get("applied"):
+        confidence = _probability_confidence(rerank_meta.get("top_score"))
+    else:
+        confidence = _confidence(ranked)
     # Scale budget proportionally so later pages receive snippet coverage.
     scaled_budget = token_budget * fetch_limit // max(limit, 1) if offset > 0 else token_budget
     from .skeleton import make_compactor
@@ -378,6 +412,8 @@ def search(
         "recommended_reads": recommended,
         "fallback_suggestions": fallback,
     }
+    if rerank_meta is not None:
+        payload["rerank"] = rerank_meta
     if offset > 0 or has_more:
         payload["pagination"] = {
             "offset": offset,

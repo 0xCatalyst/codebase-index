@@ -36,6 +36,10 @@ No. By default, `codebase-index` is completely local-first and offline. All inde
 
 Without all three, no code leaves your machine.
 
+The same holds for `search --rerank`, which sends the question and the top redacted
+candidate snippets to an external re-ranker: it needs `rerank.backend` set,
+`rerank.allow_external = true`, and an API key, or it is refused and the search stays local.
+
 ## Does it work without embeddings?
 
 Yes. The default configuration disables embeddings entirely (`backend = "noop"`). Search uses:

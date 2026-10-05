@@ -36,10 +36,16 @@ maintainer will reach out.
 - **No telemetry.** No usage data, analytics, crash reports or phone-home of
   any kind.
 - **No network by default.** The base install makes no network requests.
-  The only code path that can send repository text off the machine is the
-  *external* embeddings backend, which is refused unless all three hold:
-  `embeddings.allow_external = true` in config, an API key provided via
-  environment variable, and the endpoint warning printed by `doctor` / `index`.
+  Two opt-in code paths can send repository text off the machine:
+  - the *external* embeddings backend, refused unless all three hold:
+    `embeddings.allow_external = true` in config, an API key provided via
+    environment variable, and the endpoint warning printed by `doctor` / `index`;
+  - the external re-ranker (`search --rerank`, `explain --rerank`), refused unless
+    `rerank.backend` names one, `rerank.allow_external = true` is set and an API key
+    is provided (`$TYPESAFE_API_KEY` or `rerank.api_key_file`). It sends only the
+    question and the top `rerank.top_n` candidate snippets, after the output
+    redaction below; `doctor` names the endpoint and every re-ranked packet carries
+    it under `rerank.endpoint`.
 - **Secrets are never indexed.** `.env*`, private keys and certificates
   (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `*.crt`, `*.keystore`),
   `credentials*`, `secrets*`, binaries, dependency and build directories,

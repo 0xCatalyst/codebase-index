@@ -128,7 +128,27 @@ def run_doctor(root: Path, config: Config) -> list[Finding]:
         )
 
     findings.append(_memory_finding(config))
+    findings.append(_rerank_finding(config))
     return findings
+
+
+def _rerank_finding(config: Config) -> Finding:
+    """Name the endpoint `search --rerank` sends snippets to, or why it is refused."""
+    from .retrieval.external_rerank import refusal
+
+    rr = config.rerank
+    if rr.backend == "none":
+        return Finding("rerank_external", ok=True, severity="info",
+                       detail="no external re-ranker configured; search stays on this machine")
+    why = refusal(config)
+    if why is not None:
+        return Finding("rerank_external", ok=False, severity="info",
+                       detail=f"`search --rerank` is refused: {why}")
+    return Finding(
+        "rerank_external", ok=True, severity="medium",
+        detail=(f"EXTERNAL RERANK ENABLED: `search --rerank` sends the top {rr.top_n} "
+                f"redacted snippets of each query to {rr.endpoint}"),
+    )
 
 
 def _memory_finding(config: Config) -> Finding:

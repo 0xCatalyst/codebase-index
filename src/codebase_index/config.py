@@ -49,6 +49,22 @@ class GraphConfig(BaseModel):
     node_cap: int = 40
 
 
+class RerankConfig(BaseModel):
+    """Opt-in external re-ranker for `search --rerank` (SECURITY.md). Query-time only,
+    so not in config_hash."""
+
+    backend: Literal["none", "typesafe"] = "none"
+    allow_external: bool = False  # snippets leave the machine: refused unless True AND a key is present
+    endpoint: str = "https://api.typesafe.ai/v1/systemone"
+    model: str = "jev-latest"
+    api_key_file: Optional[str] = None  # read when $TYPESAFE_API_KEY is unset
+    top_n: int = 30  # local candidates scored per query
+    max_lines: int = 60  # lines of each candidate that are sent
+    workers: int = 12
+    timeout_s: float = 20.0
+    retries: int = 3
+
+
 class MemoryConfig(BaseModel):
     """Evidence memory (docs/MEMORY.md). Not indexing-relevant, so not in config_hash."""
 
@@ -67,6 +83,7 @@ class Config(BaseModel):
     retrieval: RetrievalConfig = RetrievalConfig()
     embeddings: EmbeddingsConfig = EmbeddingsConfig()
     graph: GraphConfig = GraphConfig()
+    rerank: RerankConfig = RerankConfig()
     memory: MemoryConfig = MemoryConfig()
     redaction: dict = {"enabled": True}
 

@@ -270,6 +270,20 @@ Results are trimmed to fit `--token-budget` (default per intent, e.g. 1500 token
 
 The point: Claude gets enough to decide, and a precise list of what to read next — never a dump.
 
+### Opt-in external re-rank (`retrieval/external_rerank.py`)
+
+`search --rerank` / `explain --rerank` add one stage after page packing and before the page is
+cut: the top `rerank.top_n` candidates (one per file after packing; the candidate pool is widened
+to supply them) are sent, redacted and cut to `rerank.max_lines`, to an external re-ranker with
+the question. The `typesafe` backend asks TypeSafe System One one yes/no question per candidate,
+"is this where the behavior asked about is implemented, configured or decided?", and reorders
+the candidates by the probability it returns; the rest keep their order behind them. Confidence
+then comes from that probability (≥ 0.8 high, ≥ 0.5 medium, else low). A failed call scores a
+neutral 0.5; if every call fails, the local order stands. It is off unless configured (see
+SECURITY.md) and meant for plain-English questions worded unlike the code, which lexical and
+graph retrieval rank poorly. The packet's `rerank` object reports `applied` or the refusal
+`reason`, the endpoint, candidates, failures, input tokens and latency.
+
 ## 8. Confidence & fallback
 
 A categorical `confidence` (high/medium/low) is derived from exact-symbol evidence,

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  Works with Claude Code, Codex CLI, OpenCode and any MCP client. Runs on your machine. Sends nothing anywhere.
+  Works with Claude Code, Codex CLI, OpenCode and any MCP client. Runs on your machine. Sends nothing anywhere unless you opt in.
 </p>
 
 <p align="center">
@@ -36,6 +36,26 @@
 </p>
 
 <p align="center"><sub>Real output on <code>pallets/flask</code>. Reproduce it with <a href="examples/demo/">examples/demo</a>.</sub></p>
+
+## About this fork
+
+`0xCatalyst/codebase-index` is a fork of
+[denfry/codebase-index](https://github.com/denfry/codebase-index). It is not published to PyPI:
+`pip install codebase-index` installs upstream, without these changes. Install the fork with
+
+```bash
+pipx install "git+https://github.com/0xCatalyst/codebase-index.git"
+```
+
+- **JS/TS graphs resolved the way the TypeScript compiler resolves them**: the TSX grammar for
+  `.tsx`, tsconfig `paths`, calls and references bound through their imports, JSX and type
+  references. On a 1,842-file Next.js repository, file-level `impact` F1 went from 62% to 99%.
+- **Opt-in `--rerank`** for plain-English questions, through TypeSafe. It needs a TypeSafe API
+  key and a per-project opt-in, because it sends redacted snippets off the machine:
+  [docs/RERANK.md](docs/RERANK.md).
+
+Versions are `<upstream version>+catalyst.<n>`, a PEP 440 local version: `2.1.2+catalyst.1` is
+upstream 2.1.2 plus the fork's first change set. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Try it in 60 seconds
 
@@ -214,9 +234,11 @@ Deep dives: [Architecture](docs/ARCHITECTURE.md) ·
   `.cursorignore` are honoured.
 - **Secrets never get out.** Snippets are redacted again at output time (AWS keys,
   private-key blocks, JWTs, connection strings, Slack tokens, high-entropy values).
-- **One opt-in exit, triple-gated.** External embeddings require an explicit config
+- **Two opt-in exits, each gated.** External embeddings require an explicit config
   flag, an API key in the environment, and a printed endpoint warning, or they are
-  refused. Local embeddings stay local.
+  refused. Local embeddings stay local. `search --rerank` sends redacted top
+  candidates to an external re-ranker only when `rerank.allow_external` is set and a
+  key is present.
 - **Verify it yourself.** `codebase-index doctor --strict` audits the gates and exits
   non-zero in CI if one is off.
 

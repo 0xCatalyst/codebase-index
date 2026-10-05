@@ -418,6 +418,12 @@ def search(
         help="Agent text: ranked locations with numbered matching lines, no JSON.",
     ),
     json_out: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    rerank: bool = typer.Option(
+        False, "--rerank",
+        help="Reorder the top candidates with the configured external re-ranker, for "
+        "plain-English questions. Sends redacted snippets off the machine; refused unless "
+        "rerank.allow_external is true and a key is set (SECURITY.md).",
+    ),
 ) -> None:
     """Hybrid ranked search; returns compact results + recommended_reads."""
     from .output import json as json_renderer
@@ -443,7 +449,7 @@ def search(
     payload = search_payload(
         db_path, cfg, query, mode=mode, limit=limit, offset=offset,
         token_budget=token_budget, no_fallback=no_fallback, backend=backend, raw=raw,
-        session=session, hit_lines=compact,
+        session=session, hit_lines=compact, rerank=rerank,
     )
 
     if compact:
@@ -619,6 +625,11 @@ def explain(
         help="Agent text: ranked locations with numbered matching lines, no JSON.",
     ),
     json_out: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    rerank: bool = typer.Option(
+        False, "--rerank",
+        help="Reorder the top candidates with the configured external re-ranker (see "
+        "`search --rerank`).",
+    ),
 ) -> None:
     """Intent-aware bundle for 'how does X work' / overview questions."""
     from .output import json as json_renderer
@@ -632,7 +643,7 @@ def explain(
     payload = search_payload(
         db_path, cfg, normalize_explain_query(query), mode="hybrid", limit=10,
         token_budget=token_budget, no_fallback=False, backend=backend, raw=raw,
-        session=session, hit_lines=compact,
+        session=session, hit_lines=compact, rerank=rerank,
     )
 
     if compact:

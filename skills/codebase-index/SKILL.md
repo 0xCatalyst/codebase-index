@@ -14,6 +14,7 @@ numbered lines, so most answers need no Read and no Grep at all.
 | Intent | Command |
 |---|---|
 | Where / how does X work? | `codebase-index search "X" --compact --session <tag>` |
+| A plain-English question worded unlike the code ("stop users spamming the chat") | `codebase-index search "…" --compact --rerank --session <tag>` |
 | Overview of a feature | `codebase-index explain "X" --compact --session <tag>` |
 | Every caller / call site of X | `codebase-index refs "Owner.member" --compact` |
 | What breaks if X changes (incl. other modules) | `codebase-index impact "Owner.member" --compact` |
@@ -21,6 +22,11 @@ numbered lines, so most answers need no Read and no Grep at all.
 | A class: members, who uses it | `codebase-index describe "Class" --json` |
 | What does my diff affect? | `codebase-index diff-impact --json` |
 | Is what I read earlier still true? | `codebase-index verify --session <tag> --json` |
+
+`--rerank` sends the top candidates (redacted) to the project's configured external
+re-ranker and reorders them; use it only for plain-English questions, never for
+identifiers or error strings. Without a configured re-ranker the header says
+`rerank skipped` and the local order stands.
 
 `--compact` prints `path:start-end symbol` per result with the matching lines
 numbered underneath (`  24| public static final String FILE_ID = ...`). Cite

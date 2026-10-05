@@ -127,7 +127,7 @@ This is the closest direct alternative, so the comparison is the most careful.
   - **Simplicity and safety:** a small pure-Python surface, a multi-gate exclusion
     pipeline, output-time secret redaction, and a `doctor --strict` self-check.
   - **Strict privacy model:** no telemetry, no network by default; external
-    embeddings are opt-in and gated three ways.
+    embeddings and the external re-ranker are opt-in and gated.
   - **Token-budgeted retrieval packets:** ranked `file:line` ranges and
     `recommended_reads` under an explicit budget, tuned for the Claude/Codex/
     OpenCode workflow.

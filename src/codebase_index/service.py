@@ -80,9 +80,14 @@ def search_payload(
     raw: bool = False,
     session: Optional[str] = None,
     hit_lines: bool = False,
+    rerank: bool = False,
 ) -> dict:
     """One search session: open the DB (vector-enabled when the backend is
     live), run retrieval, return the payload dict both surfaces serialize.
+
+    ``rerank`` asks the configured external re-ranker to reorder the top candidates
+    (SECURITY.md); when the config refuses it, the packet's ``rerank`` says why and the
+    local order stands.
 
     ``raw`` forces full snippets; otherwise snippets are skeletonized when
     ``cfg.retrieval.compact_snippets`` is on (the default).
@@ -97,6 +102,11 @@ def search_payload(
     compact = cfg.retrieval.compact_snippets and not raw
     tag = session_tag(session)
     enabled = memory_enabled(cfg)
+    reranker = rerank_refused = None
+    if rerank:
+        from .retrieval.external_rerank import make_reranker
+
+        reranker, rerank_refused = make_reranker(cfg)
     with Database(db_path) as db:
         if backend is not None and getattr(backend, "enabled", False):
             db.enable_vectors()
@@ -117,6 +127,8 @@ def search_payload(
                 evidence=evidence,
                 max_read_lines=cfg.retrieval.max_read_lines,
                 hit_lines=hit_lines,
+                reranker=reranker,
+                rerank_refused=rerank_refused,
             )
     if tag is not None and not enabled:
         payload["memory"] = {"session": tag, "available": False, "reason": "memory is disabled"}

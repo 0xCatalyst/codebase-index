@@ -229,6 +229,10 @@ def render_search_compact(payload: dict) -> str:
     elif index.get("stale"):
         head += (f" · index stale ({index.get('files_changed_since_build', '?')} files"
                  " changed): run `codebase-index update`")
+    rerank = payload.get("rerank")
+    if rerank is not None:
+        head += (f" · reranked by {rerank.get('backend')}" if rerank.get("applied")
+                 else f" · rerank skipped: {rerank.get('reason')}")
     memory = payload.get("memory") or {}
     for item in memory.get("invalidated") or []:
         head += f"\n# changed since sent: {item.get('path')}:{item.get('line_start')}"

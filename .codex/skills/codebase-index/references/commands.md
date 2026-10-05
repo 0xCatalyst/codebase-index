@@ -17,6 +17,10 @@ Useful search options:
 - `--offset <pagination offset>`
 - `--raw` to disable snippet skeletonization
 - `--no-fallback` to suppress fallback suggestions
+- `--rerank` (also on `explain`) for a plain-English question worded unlike the code:
+  an external model reorders the top candidates. Only when the project configured it
+  (`rerank.allow_external`); otherwise the packet's `rerank.reason` says why and the
+  local order stands. Not for identifier or error-string lookups
 - `--session <tag>` to name this conversation's context: unchanged evidence it
   already received comes back as `reused: true` without the snippet, and
   evidence that changed is listed under `memory.invalidated`
