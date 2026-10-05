@@ -196,7 +196,8 @@ def test_refs_cli_compact_and_session(repo_root: Path, db):
     lines = [ln for ln in result.output.splitlines() if not ln.startswith("[codebase-index]")]
     assert lines == [
         "# TreasuryService.deposit: 1 call",
-        "polity/src/main/kotlin/Hooks.kt:3 call Hooks.run -> TreasuryService.deposit",
+        "polity/src/main/kotlin/Hooks.kt:3 call Hooks.run -> TreasuryService.deposit"
+        "  | TreasuryService.deposit(null)",
     ]
     for cmd in (["symbol", "Treasury"], ["impact", "Treasury"], ["refs", "Treasury"]):
         res = runner.invoke(app, ["--root", str(repo_root), *cmd, "--session", "bench",

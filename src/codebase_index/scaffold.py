@@ -159,22 +159,22 @@ def _upsert_managed_block(path: Path, content: str) -> Path:
 
 
 def write_codex_agents(root: Path) -> Path:
-    rel = CODEX_SKILL_REL / "SKILL.md"
-    content = f"""# codebase-index
+    # The block is the whole routing an agent needs: exact commands, no pointer to
+    # the skill docs. Measured on a real repo, agents that first read the skill and
+    # `--help`, then re-checked answers with grep, spent more turns than grep alone.
+    content = """# codebase-index
 
-Use the local codebase index before scanning repository files.
+Answer code questions from the local index. `refs` and `impact` resolve imports
+(compiler-grade for JS/TS): act on their output, with no
+`--help`, skill docs, or re-checks by `rg` or scripts.
 
-Skill resources: `{rel.as_posix()}`
+- Who calls/uses X: `codebase-index refs X --compact` (prints each call line)
+- All dependents of a file/symbol: `codebase-index impact <path|X> --depth 20 --compact`
+- Where behavior Y lives: `codebase-index search "Y" --compact --rerank`
+- Definition of X: `codebase-index symbol X`
 
-Run `codebase-index search "<query>" --session <tag> --json` for general
-questions, or use `symbol`, `refs`, `impact`, and `graph` for symbol lookup,
-references, change impact, and HTML graph export. Use one session tag per
-conversation: unchanged evidence you already received comes back as
-`reused: true`, and evidence that changed is listed under `memory.invalidated`.
-Before relying on something read earlier, run
-`codebase-index verify --session <tag> --json`. Search/read commands auto-build
-the index when it is missing; run `codebase-index update` when responses report
-stale data.
+Open files only to edit, or when printed lines fall short. Use `rg` for non-code
+text; run `codebase-index update` if output says stale.
 """
     return _upsert_managed_block(root / "AGENTS.md", content)
 

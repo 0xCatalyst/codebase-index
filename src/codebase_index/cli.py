@@ -86,6 +86,38 @@ def _checked_session(session: Optional[str]) -> Optional[str]:
         raise typer.Exit(code=2)
 
 
+_SITE_LINE_MAX = 160
+
+
+def _site_lines(root: Path, sites: list) -> dict[tuple[str, int], str]:
+    """Each site's source line, whitespace-collapsed, cut and redacted.
+
+    `refs --compact` prints it next to the site so an agent sees how the symbol is
+    used without opening every file (the follow-up reads cost more turns than the
+    lines themselves).
+    """
+    from .output.redact import redact_snippet
+
+    files: dict[str, list[str]] = {}
+    out: dict[tuple[str, int], str] = {}
+    for site in sites:
+        if site.path not in files:
+            try:
+                text = (root / site.path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            files[site.path] = text.splitlines()
+        lines = files[site.path]
+        if not 0 < site.line <= len(lines):
+            continue
+        line = " ".join(lines[site.line - 1].split())
+        if len(line) > _SITE_LINE_MAX:
+            line = line[:_SITE_LINE_MAX] + "…"
+        if line:
+            out[(site.path, site.line)] = redact_snippet(line)
+    return out
+
+
 def _memory_line(memory: dict) -> str:
     if not memory.get("enabled", True):
         return "memory: disabled"
@@ -504,7 +536,7 @@ def refs(
     ),
     compact: bool = typer.Option(
         False, "--compact",
-        help="One line per site (path:line kind caller -> target), no JSON envelope.",
+        help="One line per site (path:line kind caller -> target  | source line), no JSON envelope.",
     ),
     session: Optional[str] = typer.Option(
         None, "--session",
@@ -528,7 +560,7 @@ def refs(
             db.conn, symbol_name, kind=kind, exclude_tests=exclude_tests, paths=path or ()
         )
     if compact:
-        typer.echo(md_out.render_refs_compact(resp))
+        typer.echo(md_out.render_refs_compact(resp, code=_site_lines(Path(_cfg.root), resp.sites)))
     else:
         typer.echo(json_out.render(resp) if is_json else md_out.render_refs(resp))
 
@@ -540,7 +572,7 @@ def impact(
     depth: int = typer.Option(2, "--depth"),
     direction: str = typer.Option("up", "--direction", help="up|down|both"),
     compact: bool = typer.Option(
-        False, "--compact", help="One line per affected node, no JSON."
+        False, "--compact", help="One line per affected file, no JSON."
     ),
     session: Optional[str] = typer.Option(
         None, "--session",
@@ -565,8 +597,13 @@ def impact(
     with Database(db_path) as db:
         resp = impact_lookup(db.conn, target, depth=depth, direction=direction)
         resp.modules = modules_for_paths(Path(_cfg.root), target_paths(db.conn, target))
+        deeper = 0
+        if compact and resp.files:
+            # One hop further: a nonzero count means --depth cut the answer short.
+            beyond = impact_lookup(db.conn, target, depth=depth + 1, direction=direction)
+            deeper = len(set(beyond.files) - set(resp.files))
     if compact:
-        typer.echo(md_out.render_impact_compact(resp))
+        typer.echo(md_out.render_impact_compact(resp, deeper=deeper))
         return
     typer.echo(json_out.render(resp) if is_json else md_out.render_impact(resp))
 

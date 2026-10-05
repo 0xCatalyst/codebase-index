@@ -7,7 +7,9 @@ allowed-tools: Bash(codebase-index search *), Bash(codebase-index explain *), Ba
 # Codebase Index
 
 Use the local index before reading repository files. It answers with ranked,
-numbered lines, so most answers need no Read and no Grep at all.
+numbered lines, so most answers need no Read and no Grep at all. For JS/TS,
+`refs` and `impact` resolve imports like the TypeScript compiler: act on them,
+since re-checking with grep or scripts only repeats the work.
 
 ## Route the question — always `--compact`
 
@@ -17,7 +19,7 @@ numbered lines, so most answers need no Read and no Grep at all.
 | A plain-English question worded unlike the code ("stop users spamming the chat") | `codebase-index search "…" --compact --rerank --session <tag>` |
 | Overview of a feature | `codebase-index explain "X" --compact --session <tag>` |
 | Every caller / call site of X | `codebase-index refs "Owner.member" --compact` |
-| What breaks if X changes (incl. other modules) | `codebase-index impact "Owner.member" --compact` |
+| What breaks if X changes, all hops (incl. other modules) | `codebase-index impact "<path or Owner.member>" --depth 20 --compact` |
 | Find a definition | `codebase-index symbol "X"` |
 | A class: members, who uses it | `codebase-index describe "Class" --json` |
 | What does my diff affect? | `codebase-index diff-impact --json` |
@@ -35,13 +37,18 @@ answer the question — and then only that range, never the whole file.
 
 Name members as `Owner.member` (`TownService.refresh`, `activation::place`,
 `CoreError::ObjectDamaged`) so same-named methods of other types are excluded.
-`refs --compact` lines are `path:line kind caller -> target`: the list of call
-sites with the calling function is usually the whole answer. Add
+`refs --compact` lines are `path:line kind caller -> target  | source line`: the
+call sites, their calling function and the line itself are usually the whole answer. Add
 `--exclude-tests` for production-only lists and `--path <prefix>` for one module.
 `kind reference` is a non-call use, e.g. an enum variant matched in a `match` arm.
+For a type-shape change (a new required field), `refs` lists named uses only;
+values built through a containing type surface when `tsc` runs after the edit,
+so do not crawl `refs` across every container.
 
 `impact --compact` starts with `# module <m>: build files depending on it: ...`
-— the answer to "does another module depend on this", with no build-file grep.
+— the answer to "does another module depend on this", with no build-file grep —
+then lists each affected file once (`d<hops> path (symbol:line, ...)`).
+`# incomplete:` means `--depth` cut the walk short; rerun deeper.
 
 ## Protocol
 

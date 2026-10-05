@@ -74,7 +74,11 @@ def test_init_codex_writes_agents_package_and_resources(tmp_path):
     assert agents.is_file()
     text = agents.read_text(encoding="utf-8")
     assert "codebase-index" in text
-    assert ".codex/skills/codebase-index/SKILL.md" in text
+    # The block carries the exact commands, so an agent needs no skill doc or --help.
+    for command in ("codebase-index refs X --compact", "--depth 20 --compact",
+                    "--compact --rerank", "codebase-index symbol X"):
+        assert command in text
+    assert ".codex/skills/codebase-index/SKILL.md" not in text
 
     skill = root / ".codex" / "skills" / "codebase-index"
     assert (skill / "SKILL.md").is_file()

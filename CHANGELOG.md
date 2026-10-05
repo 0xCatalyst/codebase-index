@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.2+catalyst.2] - 2026-10-05
+
+Agent-facing output and routing. On the same 1,842-file Next.js repository, six navigation
+tasks graded against the TypeScript compiler took Codex 38% less wall time and 26% fewer
+input tokens than grep alone, with the same answers. The routing it replaces, which pointed
+agents at the skill docs, made Codex 19% slower than grep alone.
+
+### Changed
+
+- `impact --compact` lists each affected file once, at its nearest distance, with the
+  symbols that link it (`d1 path (name:line, ...)`), instead of one line per call site.
+  When `--depth` stops the walk early, a `# incomplete: N+ more files beyond depth D` line
+  says so, so a shallow walk no longer passes for the whole answer.
+- The `AGENTS.md` block that `init --target codex` writes is now the whole routing: the
+  exact commands for callers (`refs`), all-hop dependents (`impact --depth 20`), plain-English
+  search (`search --rerank`) and definitions (`symbol`), and an instruction to act on
+  `refs` and `impact` output instead of re-checking it. It no longer points at the skill
+  docs, which agents otherwise read before their first query.
+- The skill gives the same guidance: `impact` needs `--depth` to reach every hop, and `refs`
+  lists named uses only, so after a type-shape edit the compiler finds values built through
+  a containing type.
+
+### Added
+
+- `refs --compact` ends each site with its source line (`  | foo(2);`), whitespace
+  collapsed, cut at 160 characters and passed through secret redaction, so a usage can be
+  judged without opening the file.
+
 ## [2.1.2+catalyst.1] - 2026-10-05
 
 First change set of the 0xCatalyst fork, on top of upstream 2.1.2. Fork versions are

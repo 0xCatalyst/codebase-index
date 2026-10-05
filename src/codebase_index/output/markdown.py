@@ -270,27 +270,49 @@ def render_search_compact(payload: dict) -> str:
     return "\n".join(lines)
 
 
-def render_impact_compact(resp: ImpactResponse) -> str:
-    """Agent text for impact: `d<hops> path:line name via edge [confidence]`."""
+def render_impact_compact(resp: ImpactResponse, *, deeper: int = 0) -> str:
+    """Agent text for impact: one line per affected file, `d<hops> path (name:line, ...)`.
+
+    A blast-radius question is answered by the set of files, so each file is listed
+    once at its nearest distance, with the symbols that link it. `deeper` counts the
+    files one hop past `--depth`; when it is nonzero the list is cut short and the
+    header says so, instead of letting a shallow walk pass for the whole answer.
+    """
     lines = [f"# impact {resp.target} · {resp.direction} · depth {resp.depth} · "
              f"{len(resp.files)} files"]
     if resp.coverage.partial:
         lines.append(f"# partial: {resp.coverage.reason}")
+    if deeper:
+        lines.append(f"# incomplete: {deeper}+ more files beyond depth {resp.depth}; "
+                     "rerun with a larger --depth (e.g. 20) for the full set")
     for m in resp.modules:
         deps = ", ".join(m.get("dependents") or []) or "none"
         members = [f"{r['path']}:{r['line']}" for r in m.get("referenced_by", [])
                    if r.get("kind") == "member"]
         incl = f" · included by {', '.join(members)}" if members else ""
         lines.append(f"# module {m['module']}: build files depending on it: {deps}{incl}")
-    for n in sorted(resp.nodes, key=lambda x: (x.distance, x.path, x.line_start or 0)):
-        loc = f"{n.path}:{n.line_start}" if n.line_start else n.path
-        conf = "" if n.via_confidence in (None, "extracted") else f" [{n.via_confidence}]"
-        lines.append(f"d{n.distance} {loc} {n.name or ''} via {n.via_edge or '?'}{conf}".replace("  ", " "))
+    files: dict[str, dict] = {}
+    for n in resp.nodes:
+        entry = files.setdefault(n.path, {"distance": n.distance, "sites": set(), "exact": False})
+        entry["distance"] = min(entry["distance"], n.distance)
+        entry["exact"] = entry["exact"] or n.via_confidence in (None, "extracted")
+        if n.name and n.line_start:
+            entry["sites"].add((n.line_start, n.name))
+    for path, entry in sorted(files.items(), key=lambda kv: (kv[1]["distance"], kv[0])):
+        sites = ", ".join(f"{name}:{line}" for line, name in sorted(entry["sites"]))
+        conf = "" if entry["exact"] else " [inferred]"
+        lines.append(f"d{entry['distance']} {path}{f' ({sites})' if sites else ''}{conf}")
     return "\n".join(lines)
 
 
-def render_refs_compact(resp: RefsResponse) -> str:
-    """One line per site, for agents: `path:line kind caller -> target [confidence]`."""
+def render_refs_compact(
+    resp: RefsResponse, *, code: Optional[dict[tuple[str, int], str]] = None
+) -> str:
+    """One line per site, for agents: `path:line kind caller -> target [confidence]`.
+
+    With `code`, each line ends with that site's source line (`  | foo(2);`), so the
+    usage can be judged without opening the file.
+    """
     counts: dict[str, int] = {}
     for site in resp.sites:
         counts[site.kind] = counts.get(site.kind, 0) + 1
@@ -305,7 +327,9 @@ def render_refs_compact(resp: RefsResponse) -> str:
         target = site.target or (f"{site.receiver}.?" if site.receiver else "?")
         caller = f"{site.caller} -> " if site.caller else ""
         conf = "" if site.confidence == "extracted" else f" [{site.confidence}]"
-        lines.append(f"{site.path}:{site.line} {site.kind} {caller}{target}{conf}")
+        text = (code or {}).get((site.path, site.line))
+        lines.append(f"{site.path}:{site.line} {site.kind} {caller}{target}{conf}"
+                     + (f"  | {text}" if text else ""))
     return "\n".join(lines)
 
 
