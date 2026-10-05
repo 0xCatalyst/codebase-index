@@ -8,6 +8,7 @@ from typing import Optional
 from tree_sitter import Parser, Query, QueryCursor
 from tree_sitter_language_pack import get_language
 
+from . import js_refs
 from .base import Edge, ParseResult, Symbol
 from .languages import CONTAINER_KINDS, has_grammar, spec_for
 from .symbol_chunks import build_chunks
@@ -17,7 +18,9 @@ class UnsupportedLanguage(Exception):
     pass
 
 
-def parse_file(lang: str, text: str) -> ParseResult:
+def parse_file(lang: str, text: str, path: Optional[str] = None) -> ParseResult:
+    """Parse one file. `path` (repo-relative) picks the grammar variant: a `.tsx`
+    file needs the TSX grammar, whose JSX the plain TypeScript grammar cannot read."""
     spec = spec_for(lang)
     # Tier A (hand-tuned spec) or Tier B (any loadable grammar). Only raise when no grammar
     # exists at all, so "any language with a grammar" produces symbols, not a silent fallback.
@@ -25,26 +28,63 @@ def parse_file(lang: str, text: str) -> ParseResult:
     if spec is None and not has_grammar(lang):
         raise UnsupportedLanguage(lang)
 
-    grammar = get_language(ts_name)
-    parser = Parser(grammar)
     source = text.encode("utf-8")
-    tree = parser.parse(source)
-    if tree is None:
-        raise ValueError("tree-sitter parser returned no tree")
+    grammar, tree = _parse_tree(lang, ts_name, source, path)
     root = tree.root_node
 
     if spec is not None:
         symbols = _extract_symbols(root, lang, source)
     else:
         symbols = _extract_symbols_generic(root, source)
-    edges = _extract_edges(root, symbols, source)
+    bindings = js_refs.file_bindings(root, source) if lang in js_refs.JS_LANGS else None
+    edges = _extract_edges(root, symbols, source, bindings)
     if lang == "rust":
         edges.extend(_rust_path_references(root, symbols, source))
+    if bindings is not None:
+        edges.extend(
+            js_refs.reference_edges(root, source, symbols, bindings, _enclosing_symbol_index)
+        )
     if spec is not None:
-        edges.extend(_extract_graph_edges(spec, grammar, root, symbols))
+        graph_edges = _extract_graph_edges(spec, grammar, root, symbols)
+        if bindings is not None:
+            js_refs.bind_heritage(graph_edges, bindings)
+        edges.extend(graph_edges)
     del grammar
     chunks = build_chunks(text, symbols)
     return ParseResult(chunks=chunks, symbols=symbols, edges=edges)
+
+
+def _parse_tree(lang: str, ts_name: str, source: bytes, path: Optional[str]):
+    """(grammar, tree) for `source`.
+
+    TypeScript has two grammars: `.tsx` files need the TSX one, and `.ts` files the
+    plain one (`<T>value` is a type assertion there, JSX in TSX). Without a path (a
+    snippet), parse as TypeScript and fall back to TSX when that reads cleaner.
+    """
+    if lang == "typescript" and path is not None and path.lower().endswith(".tsx"):
+        ts_name = "tsx"
+    grammar = get_language(ts_name)
+    tree = Parser(grammar).parse(source)
+    if tree is None:
+        raise ValueError("tree-sitter parser returned no tree")
+    if lang == "typescript" and path is None and tree.root_node.has_error:
+        tsx_grammar = get_language("tsx")
+        tsx_tree = Parser(tsx_grammar).parse(source)
+        if tsx_tree is not None and _error_count(tsx_tree.root_node) < _error_count(tree.root_node):
+            return tsx_grammar, tsx_tree
+    return grammar, tree
+
+
+def _error_count(root) -> int:
+    count = 0
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == "ERROR" or node.is_missing:
+            count += 1
+        if node.has_error:
+            stack.extend(node.children)
+    return count
 
 
 def _row(point) -> int:
@@ -168,7 +208,48 @@ def _definition_kind(node, lang: str) -> Optional[str]:
         value = _field(node, "value")
         if value is not None and _kind(value) in {"arrow_function", "function_expression"}:
             return "function"
+        if lang in js_refs.JS_LANGS:
+            return _js_declarator_kind(node, value)
     return None
+
+
+# Calls whose result is the function or component passed to them:
+# `const Card = memo(() => ...)`, `const send = useCallback(async () => ..., [])`.
+_JS_FUNCTION_WRAPPERS = frozenset({
+    "memo", "forwardRef", "useCallback", "observer", "lazy", "dynamic",
+    "React.memo", "React.forwardRef", "React.useCallback", "React.lazy",
+})
+
+
+def _js_declarator_kind(node, value) -> Optional[str]:
+    """A JS/TS `const`/`let` that is not a plain function: a wrapped function
+    (see `_JS_FUNCTION_WRAPPERS`) is a 'function' wherever it is declared; any
+    other module-level binding (`export const queryKeys = {...}`) a 'constant'.
+    Locals are left out: they shadow too often to be worth a symbol."""
+    name = _field(node, "name")
+    if name is None or _kind(name) != "identifier":
+        return None  # destructuring declares several names; none is the definition
+    if value is not None and _kind(value) == "call_expression":
+        callee = _field(value, "function")
+        if callee is not None and _callee_text(callee) in _JS_FUNCTION_WRAPPERS:
+            return "function"
+    declaration = node.parent
+    holder = declaration.parent if declaration is not None else None
+    if holder is not None and _kind(holder) == "export_statement":
+        holder = holder.parent
+    if holder is not None and _kind(holder) == "program":
+        return "constant"
+    return None
+
+
+def _callee_text(callee) -> str:
+    if _kind(callee) == "identifier":
+        return _text(callee)
+    if _kind(callee) == "member_expression":
+        obj, prop = _field(callee, "object"), _field(callee, "property")
+        if obj is not None and prop is not None and _kind(obj) == "identifier":
+            return f"{_text(obj)}.{_text(prop)}"
+    return ""
 
 
 # Identifier-like node types that can carry a definition's name across grammars.
@@ -303,13 +384,21 @@ def _enclosing(raw: list[_Sym], child: _Sym) -> Optional[_Sym]:
     return best
 
 
-def _extract_edges(root, symbols: list[Symbol], source: bytes) -> list[Edge]:
+def _extract_edges(
+    root, symbols: list[Symbol], source: bytes, bindings=None
+) -> list[Edge]:
+    """Call edges. With JS/TS `bindings` each one also records the import its
+    callee came from (see js_refs.call_binding)."""
     edges: list[Edge] = []
     for node in _walk(root):
         callee = _callee_node(node)
         if callee is None:
             continue
         line = _row(_start_point(callee)) + 1
+        module = export = None
+        if bindings is not None:
+            fn = _field(node, "function") or _field(node, "constructor")
+            module, export = js_refs.call_binding(fn, source, bindings)
         edges.append(
             Edge(
                 edge_type="call",
@@ -317,6 +406,8 @@ def _extract_edges(root, symbols: list[Symbol], source: bytes) -> list[Edge]:
                 line=line,
                 src_symbol_index=_enclosing_symbol_index(symbols, line),
                 receiver=_receiver_name(node, source),
+                module=module,
+                export=export,
             )
         )
     return edges
@@ -416,6 +507,14 @@ def _callee_node(node):
         return _field(node, "name")
     if kind == "macro_invocation":  # rust: name!(...)
         return _field(node, "macro")
+    if kind == "new_expression":  # js/ts: new Foo(...) / new ns.Foo(...)
+        ctor = _field(node, "constructor")
+        if ctor is None:
+            return None
+        if _kind(ctor) in _CALLEE_LEAVES:
+            return ctor
+        prop = _field(ctor, "property")
+        return prop if prop is not None and _kind(prop) in _CALLEE_LEAVES else None
     if kind not in {"call", "call_expression", "invocation_expression", "function_call_expression"}:
         return None
     # ruby `call` uses field "method"; everything else uses field "function".

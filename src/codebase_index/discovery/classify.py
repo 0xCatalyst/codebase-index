@@ -9,6 +9,8 @@ _LANG_BY_SUFFIX = {
     ".py": "python",
     ".ts": "typescript",
     ".tsx": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
     ".js": "javascript",
     ".jsx": "javascript",
     ".mjs": "javascript",

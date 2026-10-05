@@ -8,7 +8,7 @@
     "exists": false
   },
   "schema_version": 1,
-  "symbols": 7,
+  "symbols": 8,
   "tool": "index_stats",
   "treesitter_coverage": [
     {
@@ -21,7 +21,7 @@
       "files": 2,
       "graph": "full",
       "lang": "typescript",
-      "symbols": 1
+      "symbols": 2
     }
   ]
 }

@@ -254,15 +254,16 @@ def replace_edges(
         """
         INSERT INTO edges
             (edge_type, src_kind, src_id, dst_kind, dst_id, dst_name, file_id, line,
-             resolved, confidence, dst_qualifier)
+             resolved, confidence, dst_qualifier, dst_module, dst_export)
         VALUES
             (:edge_type, :src_kind, :src_id, :dst_kind, :dst_id, :dst_name, :file_id, :line,
-             :resolved, :confidence, :dst_qualifier)
+             :resolved, :confidence, :dst_qualifier, :dst_module, :dst_export)
         """,
         # confidence defaults to 'extracted' for callers (and tests) that predate the
         # audit-trail column; the global graph pass refines it (see graph/builder.py).
         [
-            {"confidence": "extracted", "dst_qualifier": None, **edge, "file_id": file_id}
+            {"confidence": "extracted", "dst_qualifier": None, "dst_module": None,
+             "dst_export": None, **edge, "file_id": file_id}
             for edge in edges
         ],
     )
@@ -455,7 +456,9 @@ def symbol_search(
 def unresolved_edges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT e.id AS id, e.edge_type AS edge_type, e.dst_name AS dst_name, "
-        "       e.dst_qualifier AS dst_qualifier, f.lang AS lang "
+        "       e.dst_qualifier AS dst_qualifier, e.dst_module AS dst_module, "
+        "       e.dst_export AS dst_export, e.file_id AS file_id, "
+        "       f.path AS path, f.lang AS lang "
         "FROM edges e JOIN files f ON f.id = e.file_id "
         "WHERE e.resolved = 0 AND e.dst_name IS NOT NULL ORDER BY e.id"
     ).fetchall()
@@ -545,6 +548,7 @@ def symbols_for_resolution(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Every symbol with what the graph pass matches edges on (see graph/builder.py)."""
     return conn.execute(
         "SELECT s.id AS id, s.name AS name, s.qualified AS qualified, "
+        "       s.kind AS kind, s.parent_id AS parent_id, "
         "       s.file_id AS file_id, f.path AS path, f.lang AS lang "
         "FROM symbols s JOIN files f ON f.id = s.file_id ORDER BY s.id"
     ).fetchall()

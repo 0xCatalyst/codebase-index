@@ -16,11 +16,15 @@ _PY_IMPORTS = """
 
 _JS_IMPORTS = """
     (import_statement source: (string (string_fragment) @import.module))
+    (export_statement source: (string (string_fragment) @import.module))
+    (call_expression function: (import) arguments: (arguments (string (string_fragment) @import.module)))
     (class_declaration (class_heritage (identifier) @extends.base))
 """
 
 _TS_IMPORTS = """
     (import_statement source: (string (string_fragment) @import.module))
+    (export_statement source: (string (string_fragment) @import.module))
+    (call_expression function: (import) arguments: (arguments (string (string_fragment) @import.module)))
     (class_declaration (class_heritage
         (extends_clause value: (identifier) @extends.base)))
     (class_declaration (class_heritage

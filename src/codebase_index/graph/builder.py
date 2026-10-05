@@ -19,16 +19,19 @@ full-table LIKE scans per import edge, which dominated large builds.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from typing import Optional
 
+from ..parsers import js_refs
 from ..parsers.base import module_name, names_a_type
 from ..storage import repo
+from .js_modules import JsModuleResolver
 
 _SYMBOL_EDGE_TYPES = {"call", "reference", "extends", "implements"}
 
 
-def build_graph(conn: sqlite3.Connection) -> dict[str, int]:
-    resolved = resolve_edges(conn)
+def build_graph(conn: sqlite3.Connection, root: Optional[Path] = None) -> dict[str, int]:
+    resolved = resolve_edges(conn, root)
     repo.recompute_degrees(conn)
     # Everything still unresolved that names a target is, by definition, a target we
     # could not pin to a unique node — record it as 'ambiguous' for the honesty trail.
@@ -47,13 +50,19 @@ def build_graph(conn: sqlite3.Connection) -> dict[str, int]:
     return {"resolved": resolved, "unresolved": total_unresolved}
 
 
-def resolve_edges(conn: sqlite3.Connection) -> int:
+def resolve_edges(conn: sqlite3.Connection, root: Optional[Path] = None) -> int:
+    """Resolve every unresolved edge; `root` lets JS/TS imports read tsconfig paths."""
     edges = repo.unresolved_edges(conn)
     if not edges:
         return 0
 
-    targets = _SymbolTargets(repo.symbols_for_resolution(conn))
-    suffix_map = _path_suffix_map(repo.all_file_ids_with_paths(conn))
+    symbol_rows = repo.symbols_for_resolution(conn)
+    targets = _SymbolTargets(symbol_rows)
+    file_rows = repo.all_file_ids_with_paths(conn)
+    suffix_map = _path_suffix_map(file_rows)
+    js = _JsTargets(
+        symbol_rows, JsModuleResolver(root, {row["path"]: int(row["id"]) for row in file_rows})
+    )
 
     # (dst_kind, dst_id, edge_id, confidence). A name unique within its language
     # family is an exact hit -> 'extracted'; an owner/module match and an import
@@ -61,6 +70,11 @@ def resolve_edges(conn: sqlite3.Connection) -> int:
     resolutions: list[tuple[str, int, int, str]] = []
     for edge in edges:
         name = edge["dst_name"]
+        if language_family(edge["lang"]) == "js":
+            js_hit = js.resolve(edge, targets)
+            if js_hit is not None:
+                resolutions.append((js_hit[0], js_hit[1], edge["id"], js_hit[2]))
+            continue
         if edge["edge_type"] == "import":
             file_id = _module_to_file_id(suffix_map, name, lang=edge["lang"])
             if file_id is not None:
@@ -137,6 +151,97 @@ class _SymbolTargets:
         if sym_id is None:
             sym_id = self._module.get((family, receiver, name))
         return (sym_id, "inferred") if sym_id is not None else None
+
+    def resolve_owned(self, family: Optional[str], receiver: str, name: str) -> Optional[int]:
+        """The member `name` of the one type named `receiver`, if exactly one has it."""
+        return self._owned.get((family, receiver, name))
+
+
+class _JsTargets:
+    """JS/TS resolution: exact through the import a name came from (js_refs).
+
+    `import { foo } from './x'; foo()` resolves to `foo` in the file './x' names;
+    `kv.get()` on `import { kv }` to the member `kv.get` there. A name no import
+    binds in an ES module is same-file (the pipeline already resolved it) or a
+    global, and is left unresolved: matching it repo-wide is what bound every
+    `Date.now()` to the repo's one `now`. An untyped member call (`items.push(x)`)
+    may still match a repo-unique *method*, not a built-in's, as 'inferred'.
+    """
+
+    def __init__(self, rows: list[sqlite3.Row], modules: JsModuleResolver) -> None:
+        self.modules = modules
+        self._by_file: dict[tuple[int, str], int] = {}  # (file, name or qualified) -> symbol
+        self._kind: dict[int, str] = {}
+        unique: dict[str, list[int]] = {}
+        for row in rows:
+            if language_family(row["lang"]) != "js":
+                continue
+            sym_id, file_id = int(row["id"]), int(row["file_id"])
+            self._kind[sym_id] = row["kind"]
+            if row["parent_id"] is None:
+                self._by_file.setdefault((file_id, row["name"]), sym_id)
+            qualified = row["qualified"]
+            if qualified and qualified != row["name"]:
+                self._by_file.setdefault((file_id, qualified), sym_id)
+            unique.setdefault(row["name"], []).append(sym_id)
+        self._unique = {name: ids[0] for name, ids in unique.items() if len(ids) == 1}
+
+    def resolve(self, edge: sqlite3.Row, targets: "_SymbolTargets") -> Optional[tuple[str, int, str]]:
+        name, module = edge["dst_name"], edge["dst_module"]
+        if edge["edge_type"] == "import":
+            file_id = self.modules.resolve(name, edge["path"])
+            return ("file", file_id, "extracted") if file_id is not None else None
+        if module == js_refs.UNBOUND:
+            return None
+        if module == js_refs.SCRIPT:
+            sym_id = self._unique.get(name)
+            if sym_id is not None and self._kind.get(sym_id) != "method":
+                return "symbol", sym_id, "inferred"
+            return None
+        if module is not None:
+            return self._imported(edge, name, module, edge["dst_export"])
+        return self._untyped_member(edge, name, targets)
+
+    def _imported(self, edge, name: str, module: str, export: Optional[str]):
+        file_id = self.modules.resolve(module, edge["path"])
+        if file_id is None:
+            return None  # a package, or a path the index does not hold
+        export = export or name
+        lookup = name if export == "default" else export
+        sym_id = self._by_file.get((file_id, lookup))
+        if sym_id is not None:
+            return "symbol", sym_id, "extracted"
+        # Not defined there: a barrel re-exporting it, or `obj.member` where the
+        # member is a property the index has no symbol for. A repo-unique definition
+        # of the name is the likely target, but only a heuristic one.
+        last = lookup.rsplit(".", 1)[-1]
+        sym_id = self._unique.get(last)
+        if sym_id is None or (last in js_refs.BUILTIN_MEMBERS and "." in lookup):
+            return None
+        wants_method = "." in lookup
+        if (self._kind.get(sym_id) == "method") != wants_method:
+            return None
+        return "symbol", sym_id, "inferred"
+
+    def _untyped_member(self, edge, name: str, targets: "_SymbolTargets"):
+        receiver = edge["dst_qualifier"]
+        if edge["edge_type"] in ("extends", "implements"):
+            hit = targets.resolve("js", receiver, name)
+            return ("symbol", hit[0], hit[1]) if hit is not None else None
+        if edge["edge_type"] != "call":
+            return None
+        if receiver not in ("this", "super") and name in js_refs.BUILTIN_MEMBERS:
+            return None
+        sym_id = self._unique.get(name)
+        if sym_id is not None and self._kind.get(sym_id) == "method":
+            hit = targets.resolve("js", receiver, name)
+            if hit is not None and hit[0] == sym_id:
+                return "symbol", sym_id, "inferred"
+        if receiver is not None:
+            owned = targets.resolve_owned("js", receiver, name)
+            if owned is not None and self._kind.get(owned) == "method":
+                return "symbol", owned, "inferred"
+        return None
 
 
 def _claim(

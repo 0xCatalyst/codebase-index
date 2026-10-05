@@ -72,7 +72,13 @@ CREATE TABLE IF NOT EXISTS edges (
     confidence    TEXT NOT NULL DEFAULT 'extracted',
     -- Receiver of a call edge ('TownService' in `TownService.refresh(x)`), NULL for a
     -- bare call. Lets the graph pass resolve a non-unique method name by its owner.
-    dst_qualifier TEXT
+    dst_qualifier TEXT,
+    -- JS/TS: the import specifier the target name was bound by ('@/lib/kv'), '' for a
+    -- name no import binds in an ES module (same-file or global, never matched
+    -- repo-wide), '*' in a classic script; NULL for an untyped member call and in
+    -- other languages. dst_export is the name that module exports it under.
+    dst_module    TEXT,
+    dst_export    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_edges_src  ON edges(src_kind, src_id);
 CREATE INDEX IF NOT EXISTS idx_edges_dst  ON edges(dst_kind, dst_id);

@@ -38,6 +38,13 @@ class Edge:
     # What the call was made on, e.g. 'TownService' for `TownService.refresh(x)`;
     # None for a bare call or a receiver that is not a plain (dotted) name.
     receiver: Optional[str] = None
+    # JS/TS only (see parsers/js_refs.py): the import specifier the name was bound
+    # by, or js_refs.UNBOUND / js_refs.SCRIPT for a bare name no import binds; None
+    # for a member call on a value the index cannot type, and in other languages.
+    module: Optional[str] = None
+    # The name `module` exports it under ('default' for a default import, 'obj.member'
+    # for a member call on an imported object). None when `module` is not a specifier.
+    export: Optional[str] = None
 
 
 def module_name(path: str) -> str:

@@ -7,7 +7,7 @@
     "enabled": true,
     "exists": false
   },
-  "symbols": 7,
+  "symbols": 8,
   "treesitter_coverage": [
     {
       "files": 3,
@@ -19,7 +19,7 @@
       "files": 2,
       "graph": "full",
       "lang": "typescript",
-      "symbols": 1
+      "symbols": 2
     }
   ]
 }

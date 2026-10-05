@@ -16,6 +16,7 @@ from ..config import Config
 from ..discovery.walker import walk
 from ..embeddings.backend import resolve_backend
 from ..graph.builder import build_graph
+from ..parsers import js_refs
 from ..parsers.base import ParseResult, names_a_type
 from ..parsers.line_chunker import chunk_text
 from ..parsers.treesitter import UnsupportedLanguage, parse_file
@@ -92,7 +93,7 @@ def _parse_one(cand) -> _ParseResult:
     except OSError:
         sha256 = ""
     text = _read_text(cand.path)
-    outcome = _parse(cand.lang, cand.parser, text, config)
+    outcome = _parse(cand.lang, cand.parser, text, config, cand.rel_path)
     doc_chunks = extract_doc_chunks(text, cand.rel_path, cand.lang)
     return _ParseResult(sha256=sha256, outcome=outcome, doc_chunks=doc_chunks)
 
@@ -107,7 +108,7 @@ def _parse_one_inline(
         except OSError:
             sha256 = ""
     text = _read_text(cand.path)
-    outcome = _parse(cand.lang, cand.parser, text, config)
+    outcome = _parse(cand.lang, cand.parser, text, config, cand.rel_path)
     doc_chunks = extract_doc_chunks(text, cand.rel_path, cand.lang)
     return _ParseResult(sha256=sha256, outcome=outcome, doc_chunks=doc_chunks)
 
@@ -161,7 +162,7 @@ def _write_candidate(conn, cand, pr: _ParseResult, now: str) -> BuildStats:
     if pr.doc_chunks:
         repo.append_chunks(conn, file_id, pr.doc_chunks)
         stats.chunks += len(pr.doc_chunks)
-    edge_rows = _resolve_edges(parse_result, symbol_ids, file_id)
+    edge_rows = _resolve_edges(parse_result, symbol_ids, file_id, cand.lang)
     repo.replace_edges(conn, file_id, edge_rows)
     stats.chunks += len(parse_result.chunks)
     stats.symbols += len(parse_result.symbols)
@@ -189,7 +190,7 @@ def build_index(config: Config, db: Database, root: Optional[Path] = None) -> Bu
     if head := _git_head(root):
         repo.set_meta(conn, "head_commit", head)
 
-    graph = build_graph(conn)
+    graph = build_graph(conn, root)
     stats.edges_resolved = graph["resolved"]
 
     if config.embeddings.enabled:
@@ -210,6 +211,10 @@ def _embed_chunks(cfg, db, conn) -> int:
         return 0
     import sqlite_vec  # type: ignore[import-untyped]
 
+    if not backend.dim:
+        # The local and external backends learn their width from the first vector
+        # they produce; vec_chunks needs it before anything is embedded.
+        backend.embed(["dimension probe"])
     db.enable_vectors()
     repo.ensure_vec_tables(conn, dim=backend.dim)
     repo.prune_orphan_vectors(conn)
@@ -258,7 +263,9 @@ def _read_text(path: Path) -> str:
         return ""
 
 
-def _parse(lang: Optional[str], parser: str, text: str, config: Config) -> _ParseOutcome:
+def _parse(
+    lang: Optional[str], parser: str, text: str, config: Config, path: Optional[str] = None
+) -> _ParseOutcome:
     """Parse a file to a ParseResult, recording (never swallowing) parse failures.
 
     Routing is owned by `classify` (Guardrail 1): only files classify labels `treesitter`
@@ -267,7 +274,7 @@ def _parse(lang: Optional[str], parser: str, text: str, config: Config) -> _Pars
     failed = False
     if lang and parser == "treesitter":
         try:
-            result = parse_file(lang, text)
+            result = parse_file(lang, text, path)
             return _ParseOutcome(result=result, zero_symbols=not result.symbols)
         except UnsupportedLanguage:
             # classify routed a tree-sitter lang with no extraction path — a Guardrail 1
@@ -286,15 +293,13 @@ def _parse(lang: Optional[str], parser: str, text: str, config: Config) -> _Pars
 
 
 def _resolve_edges(
-    parse_result: ParseResult, symbol_ids: list[int], file_id: int
+    parse_result: ParseResult, symbol_ids: list[int], file_id: int, lang: Optional[str] = None
 ) -> list[dict]:
-    name_to_id = {
-        symbol.name: symbol_ids[idx]
-        for idx, symbol in enumerate(parse_result.symbols)
-    }
+    by_name = {symbol.name: idx for idx, symbol in enumerate(parse_result.symbols)}
     local_types = {
         symbol.name for symbol in parse_result.symbols if symbol.kind in _TYPE_KINDS
     }
+    js = lang in js_refs.JS_LANGS
     rows: list[dict] = []
     for edge in parse_result.edges:
         src_id = (
@@ -303,10 +308,18 @@ def _resolve_edges(
             else file_id
         )
         src_kind = "symbol" if edge.src_symbol_index is not None else "file"
-        dst_id = name_to_id.get(edge.callee_name)
+        idx = by_name.get(edge.callee_name)
+        dst_id = symbol_ids[idx] if idx is not None else None
         if dst_id is not None and _names_foreign_type(edge.receiver, local_types):
             # `Other.refresh()` is not this file's `refresh`; leave it to the
             # global pass, which can match the receiver to its owning type.
+            dst_id = None
+        if (
+            idx is not None
+            and dst_id is not None
+            and js
+            and not _js_local_match(edge, parse_result.symbols[idx].kind)
+        ):
             dst_id = None
         rows.append(
             {
@@ -319,9 +332,29 @@ def _resolve_edges(
                 "line": edge.line,
                 "resolved": 1 if dst_id is not None else 0,
                 "dst_qualifier": edge.receiver,
+                "dst_module": edge.module,
+                "dst_export": edge.export,
             }
         )
     return rows
+
+
+def _js_local_match(edge, target_kind: str) -> bool:
+    """May a JS/TS edge bind to the same-named definition in its own file?
+
+    An imported name refers to the import, not to a local definition. A bare name
+    (`foo()`, `<Foo />`) can reach a function, class or constant but never a method.
+    A member call on a value the index cannot type (`items.push(x)`) can only reach
+    a method, and not when it is a built-in's (`push`, `get`, `then`...) unless it is
+    made on `this`/`super`.
+    """
+    if edge.edge_type not in ("call", "reference"):
+        return True  # import / extends / implements keep their own rules
+    if edge.module in (js_refs.UNBOUND, js_refs.SCRIPT):
+        return target_kind != "method"
+    if edge.module is not None or target_kind != "method":
+        return False
+    return edge.receiver in ("this", "super") or edge.callee_name not in js_refs.BUILTIN_MEMBERS
 
 
 _TYPE_KINDS = frozenset({"class", "record", "struct", "interface", "trait", "enum", "impl"})
@@ -416,7 +449,7 @@ def update_index(
     stats.deleted = len(gone)
 
     if stats.indexed or stats.deleted:
-        graph = build_graph(conn)
+        graph = build_graph(conn, root)
         stats.edges_resolved = graph["resolved"]
         if config.embeddings.enabled:
             stats.vectors = _embed_chunks(config, db, conn)
